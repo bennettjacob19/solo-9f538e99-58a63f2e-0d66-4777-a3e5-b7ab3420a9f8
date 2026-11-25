@@ -116,35 +116,41 @@ def plan_round(owned_masks, quotas, frame_limit, n_chunks):
     return path
 
 
+def simulate_station(mask, frames, quota, missed_frame=None):
+    """单台终端按实发帧序收一轮。missed_frame 为该站漏收的帧号（1 基）或 None。
+    每轮解码计数从零起算，故本轮转移只取决于入口块掩码，与历史累计解码无关。"""
+    m = mask
+    decs = 0
+    decoded = []    # [(帧号, 解回的块)]
+    received = []   # 实收帧号
+    for no, (kind, a, b) in enumerate(frames, 1):
+        if no == missed_frame:
+            continue
+        received.append(no)
+        if kind == "single":
+            m |= 1 << a
+        else:
+            ha = (m >> a) & 1
+            hb = (m >> b) & 1
+            if ha != hb and decs < quota:
+                miss = b if ha else a
+                m |= 1 << miss
+                decs += 1
+                decoded.append((no, miss))
+    return {
+        "mask": m,
+        "decodes": decs,
+        "decoded": decoded,
+        "received": received,
+        "missed_frame": missed_frame,
+    }
+
+
 def apply_round(owned_masks, quotas, frames, fault=None):
     """实发一轮。fault=(终端序号, 帧号1基) 表示该终端漏收该帧。
     返回每终端结果：[{mask, decodes, decoded, received, missed_frame}]。"""
     results = []
     for i, m0 in enumerate(owned_masks):
-        m = m0
-        decs = 0
-        decoded = []    # [(帧号, 解回的块)]
-        received = []   # 实收帧号
         missed = fault[1] if fault and fault[0] == i else None
-        for no, (kind, a, b) in enumerate(frames, 1):
-            if no == missed:
-                continue
-            received.append(no)
-            if kind == "single":
-                m |= 1 << a
-            else:
-                ha = (m >> a) & 1
-                hb = (m >> b) & 1
-                if ha != hb and decs < quotas[i]:
-                    miss = b if ha else a
-                    m |= 1 << miss
-                    decs += 1
-                    decoded.append((no, miss))
-        results.append({
-            "mask": m,
-            "decodes": decs,
-            "decoded": decoded,
-            "received": received,
-            "missed_frame": missed,
-        })
+        results.append(simulate_station(m0, frames, quotas[i], missed))
     return results

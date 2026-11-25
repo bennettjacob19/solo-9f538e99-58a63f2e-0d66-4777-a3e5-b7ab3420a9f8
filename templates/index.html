@@ -110,14 +110,22 @@
     {% for f in r.frames %}<li>{{ f }}</li>{% endfor %}
   </ol>
   <table>
-    <tr><th>终端</th><th>轮前缺块</th><th>实收帧</th><th>解回块（帧号→块）</th><th>解码次数/额度</th><th>轮后缺块</th><th>结果</th></tr>
+    <tr><th>终端</th><th>轮前缺块</th><th>实收帧</th><th>原回报 / 当前登记</th><th>解回块（帧号→块）</th><th>解码次数/额度</th><th>轮后缺块</th><th>结果</th></tr>
     {% for t in r.terminals %}
     <tr>
       <td>{{ t.name }}</td>
       <td>{% for c in t.before_missing %}#{{ c }} {% endfor %}{% if not t.before_missing %}无{% endif %}</td>
       <td>
-        {% if t.missed_frame %}<span class="bad">漏收第{{ t.missed_frame }}帧；</span>{% endif %}
-        {% for no in t.received %}{{ no }} {% endfor %}{% if not t.received %}无{% endif %}
+        {% if t.current_missed %}<span class="bad">当前漏收第{{ t.current_missed }}帧；</span>{% endif %}
+        {% set nf = r.frames|length %}
+        {% set shown = namespace(any=false) %}
+        {% for no in range(1, nf + 1) %}{% if no != t.current_missed %}{{ no }} {% set shown.any = true %}{% endif %}{% endfor %}
+        {% if not shown.any %}无{% endif %}
+      </td>
+      <td>
+        原回报：{% if t.original_missed %}<span class="bad">漏收第{{ t.original_missed }}帧</span>{% else %}<span class="ok">全收</span>{% endif %}<br>
+        当前：{% if t.current_missed %}<span class="bad">漏收第{{ t.current_missed }}帧</span>{% else %}<span class="ok">全收</span>{% endif %}
+        {% if t.original_missed != t.current_missed %}<span class="ok">（已更正）</span>{% endif %}
       </td>
       <td>{% for no, c in t.decoded %}第{{ no }}帧→#{{ c }} {% endfor %}{% if not t.decoded %}—{% endif %}</td>
       <td>{{ t.decodes }}/{{ t.quota }}</td>
@@ -130,6 +138,44 @@
   </table>
 </div>
 {% endfor %}
+{% endif %}
+
+{% if rounds %}
+<h2>6. 漏帧回报更正（实发记录保留；只改所选站所选轮的当前登记，并以首播实收为起点重算该站）</h2>
+<form method="post" action="{{ url_for('correct_report') }}" class="card">
+  <label>终端
+    <select name="terminal" required>
+      {% for t in terminals %}<option value="{{ loop.index0 }}">{{ t.name }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>已发送轮次
+    <select name="round" id="correct-round" required>
+      {% for r in rounds %}<option value="{{ r.no }}" data-frames="{{ r.frames|length }}">第 {{ r.no }} 轮（实发 {{ r.frames|length }} 帧）</option>{% endfor %}
+    </select>
+  </label>
+  <fieldset style="display:inline-block;border:1px solid #ccc;">
+    <legend>改记为</legend>
+    <label><input type="radio" name="mode" value="all" checked>全收（不漏帧）</label>
+    <label><input type="radio" name="mode" value="miss">漏收第
+      <input type="number" name="miss_frame" id="miss-frame" min="1" value="1" style="width:4em"> 帧
+      <span class="small">（帧号范围随所选轮实发帧数）</span></label>
+  </fieldset>
+  <button type="submit">提交更正并重算该站</button>
+  <div class="small">更正后未收齐的站恢复下载旧图；收齐且通过 SHA-256 校验才供新图。其他站进度与下载不变。校验失败时所有登记、进度与下载图保持原样。</div>
+</form>
+<script>
+  (function () {
+    var sel = document.getElementById('correct-round');
+    var miss = document.getElementById('miss-frame');
+    function sync() {
+      if (!sel || !miss) return;
+      var max = parseInt(sel.options[sel.selectedIndex].dataset.frames, 10) || 1;
+      miss.max = max;
+      if (parseInt(miss.value, 10) > max) miss.value = max;
+    }
+    if (sel) { sel.addEventListener('change', sync); sync(); }
+  })();
+</script>
 {% endif %}
 
 <form method="post" action="{{ url_for('reset') }}" onsubmit="return confirm('确定清空整场演练？');">
